@@ -164,5 +164,5 @@ cython_debug/
 ### User-added gitignore 
 # data/*
 # !data/.gitkeep
-
+simulation_results/*
 .env
