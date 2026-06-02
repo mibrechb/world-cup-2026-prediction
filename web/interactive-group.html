@@ -377,16 +377,85 @@
       return shapes;
     }
 
-    function syncMatrixColorbar() {
+    const MATRIX_VERTICAL_VIEW_QUERY = '(max-width: 900px)';
+    let matrixIsVerticalView = window.matchMedia(MATRIX_VERTICAL_VIEW_QUERY).matches;
+
+    function isMatrixVerticalView() {
       const graph = document.getElementById('matrix-chart');
-      if (!graph || !graph._fullLayout || !graph._fullLayout.yaxis) return;
-      const yDomain = graph._fullLayout.yaxis.domain;
-      Plotly.restyle(graph, {
-        'colorbar.len': [yDomain[1] - yDomain[0]],
-        'colorbar.y': [(yDomain[0] + yDomain[1]) / 2],
-        'colorbar.yanchor': ['middle'],
-        'colorbar.thickness': [14]
-      }, [0]);
+      if (!graph) return window.matchMedia('(max-width: 900px)').matches;
+
+      const rect = graph.getBoundingClientRect();
+      return rect.height > rect.width;
+    }
+
+    function matrixColorbar() {
+      if (isMatrixVerticalView()) {
+        return {
+          title: {
+            text: 'Win probability (%)',
+            side: 'bottom',
+            font: PLOT_FONT
+          },
+          tickfont: PLOT_FONT,
+          orientation: 'h',
+          x: 0.5,
+          xanchor: 'center',
+          y: -0.3,
+          yanchor: 'top',
+          lenmode: 'fraction',
+          len: 0.74,
+          thickness: 12
+        };
+      }
+
+      return {
+        title: {
+          text: 'Win probability (%)',
+          side: 'right',
+          font: PLOT_FONT
+        },
+        tickfont: PLOT_FONT,
+        orientation: 'v',
+        x: 1.03,
+        xanchor: 'left',
+        y: 0.5,
+        yanchor: 'middle',
+        lenmode: 'fraction',
+        len: 0.5,
+        thickness: 14
+      };
+    }
+
+    function matrixMargin() {
+      if (isMatrixVerticalView()) {
+        return { l: 72, r: 18, t: 18, b: 130 };
+      }
+
+      return { l: 92, r: 78, t: 18, b: 92 };
+    }
+
+    function matrixTrace() {
+      return Object.assign({}, matrixData[0], {
+        colorbar: matrixColorbar()
+      });
+    }
+
+    function matrixPlotLayout() {
+      return Object.assign({}, matrixLayout, {
+        margin: matrixMargin(),
+        shapes: matrixShapes()
+      });
+    }
+
+    function renderMatrix() {
+      const graph = document.getElementById('matrix-chart');
+      if (!graph) return;
+
+      Plotly.purge(graph);
+      Plotly.newPlot(graph, [matrixTrace()], matrixPlotLayout(), {
+        responsive: true,
+        displayModeBar: false
+      }).then(bindMatrixEvents);
     }
 
     function refreshMatrixShapes() {
@@ -426,21 +495,12 @@
       xgap: 1.5,
       ygap: 1.5,
       hoverongaps: false,
-      colorbar: {
-        title: 'Win probability (%)',
-        tickfont: PLOT_FONT,
-        titlefont: PLOT_FONT,
-        lenmode: 'fraction',
-        len: 0.5,
-        y: 0.5,
-        yanchor: 'middle',
-        thickness: 14
-      },
+      colorbar: matrixColorbar(),
       hovertemplate: 'Row team: %{y}<br>Opponent: %{x}<br>Win probability: %{z:.1f}%<extra></extra>'
     }];
 
     const matrixLayout = {
-      margin: { l: 92, r: 28, t: 18, b: 92 },
+      margin: matrixMargin(),
       paper_bgcolor: PAPER_COLOR,
       plot_bgcolor: PAPER_COLOR,
       font: PLOT_FONT,
@@ -475,12 +535,23 @@
       }
     };
 
-    Plotly.newPlot('matrix-chart', matrixData, matrixLayout, { responsive: true, displayModeBar: false }).then(syncMatrixColorbar);
+    renderMatrix();
 
     let resizeTimer = null;
     window.addEventListener('resize', () => {
       if (resizeTimer) window.clearTimeout(resizeTimer);
-      resizeTimer = window.setTimeout(syncMatrixColorbar, 80);
+
+      resizeTimer = window.setTimeout(() => {
+        const nextMatrixIsVerticalView = isMatrixVerticalView();
+
+        if (nextMatrixIsVerticalView !== matrixIsVerticalView) {
+          matrixIsVerticalView = nextMatrixIsVerticalView;
+          renderMatrix();
+          return;
+        }
+
+        Plotly.Plots.resize('matrix-chart');
+      }, 120);
     });
 
     function renderSummary(teamA, teamB, payload) {
@@ -581,30 +652,38 @@
       renderDetail(currentTeamA, currentTeamB);
     });
 
-    const matrixChart = document.getElementById('matrix-chart');
-    matrixChart.on('plotly_click', eventData => {
-      if (!eventData || !eventData.points || eventData.points.length === 0) return;
-      const point = eventData.points[0];
-      const teamB = point.x;
-      const teamA = point.y;
-      if (teamA === teamB) return;
-      renderDetail(teamA, teamB);
-    });
+    function bindMatrixEvents() {
+      const matrixChart = document.getElementById('matrix-chart');
+      if (!matrixChart || !matrixChart.on) return;
 
-    matrixChart.on('plotly_hover', eventData => {
-      if (!eventData || !eventData.points || eventData.points.length === 0) return;
-      const point = eventData.points[0];
-      if (point.x === point.y) return;
-      hoverTeamA = point.y;
-      hoverTeamB = point.x;
-      refreshMatrixShapes();
-    });
+      matrixChart.removeAllListeners('plotly_click');
+      matrixChart.removeAllListeners('plotly_hover');
+      matrixChart.removeAllListeners('plotly_unhover');
 
-    matrixChart.on('plotly_unhover', () => {
-      hoverTeamA = null;
-      hoverTeamB = null;
-      refreshMatrixShapes();
-    });
+      matrixChart.on('plotly_click', eventData => {
+        if (!eventData || !eventData.points || eventData.points.length === 0) return;
+        const point = eventData.points[0];
+        const teamB = point.x;
+        const teamA = point.y;
+        if (teamA === teamB) return;
+        renderDetail(teamA, teamB);
+      });
+
+      matrixChart.on('plotly_hover', eventData => {
+        if (!eventData || !eventData.points || eventData.points.length === 0) return;
+        const point = eventData.points[0];
+        if (point.x === point.y) return;
+        hoverTeamA = point.y;
+        hoverTeamB = point.x;
+        refreshMatrixShapes();
+      });
+
+      matrixChart.on('plotly_unhover', () => {
+        hoverTeamA = null;
+        hoverTeamB = null;
+        refreshMatrixShapes();
+      });
+    }
 
     populateSelectors();
     renderDetail(defaultTeamA, defaultTeamB, false);
