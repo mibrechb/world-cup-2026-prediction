@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>World Cup 2026 Predictions for SRF Tippspiel</title>
+  <style>
+    :root {
+      --page-bg: #eef3f8;
+      --panel-bg: rgba(255, 255, 255, 0.9);
+      --panel-border: rgba(148, 163, 184, 0.28);
+      --text: #0f172a;
+      --muted: #475569;
+      --accent: #0f766e;
+      --shadow: 0 24px 60px rgba(15, 23, 42, 0.12);
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+      color: var(--text);
+      background: radial-gradient(circle at top left, #dbeafe 0%, #eef3f8 35%, #f8fafc 100%);
+    }
+    .shell {
+      max-width: 1360px;
+      margin: 0 auto;
+      padding: 28px 20px 36px 20px;
+    }
+    .header {
+      display: grid;
+      gap: 12px;
+      margin-bottom: 18px;
+    }
+    .header h1 {
+      margin: 0;
+      font-size: clamp(32px, 4vw, 52px);
+      line-height: 1.02;
+      letter-spacing: -0.05em;
+      font-weight: 850;
+    }
+    .header p {
+      margin: 0;
+      max-width: 980px;
+      color: var(--muted);
+      line-height: 1.65;
+      font-size: 15px;
+    }
+    .badges {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+    .badges img { height: 28px; display: block; }
+    .tabs {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 18px;
+    }
+    .phase-tab {
+      border: 1px solid rgba(15, 118, 110, 0.18);
+      border-radius: 999px;
+      padding: 10px 16px;
+      background: rgba(255, 255, 255, 0.9);
+      color: var(--text);
+      font-size: 14px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .phase-tab.is-active {
+      background: rgba(15, 118, 110, 0.14);
+      color: var(--accent);
+      border-color: rgba(15, 118, 110, 0.35);
+    }
+    .phase-tab.is-disabled {
+      background: rgba(226, 232, 240, 0.8);
+      color: #94a3b8;
+      border-color: rgba(203, 213, 225, 0.9);
+      cursor: not-allowed;
+    }
+    .viewer {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 24px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      min-height: calc(100vh - 260px);
+    }
+    .viewer iframe {
+      width: 100%;
+      height: calc(100vh - 260px);
+      min-height: 900px;
+      border: 0;
+      display: block;
+      background: transparent;
+    }
+    .empty-state { padding: 48px 28px; color: var(--muted); line-height: 1.6; }
+    @media (max-width: 900px) {
+      .shell { padding: 18px 14px 28px 14px; }
+      .badges img { height: 24px; }
+      .viewer iframe { min-height: 760px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <div class="header">
+      <h1>World Cup 2026 Predictions for SRF Tippspiel</h1>
+      <p>This project gives machine-learning based predictions for the 2026 Football World Cup. The predictions are based on a two-stage model. It reuses the original outcome model and data pipeline of <a href="https://github.com/javierruanohdez/world-cup-2026-prediction" target="_blank" rel="noreferrer">Javier Ruano's World Cup 2026 prediction model</a> to predict win-draw-loss probabilities. It then adds per-match score simulations and optimal tip recommendations for the SRF Sport FIFA World Cup 2026 Tippspiel. Predictions start with a supervised <a href="https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.GradientBoostingClassifier.html" target="_blank" rel="noreferrer">GradientBoostingClassifier</a> that models each match as a win-draw-loss classification problem. Those outcome probabilities feed a second-stage goal layer that uses two trained <a href="https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.GradientBoostingRegressor.html" target="_blank" rel="noreferrer">GradientBoostingRegressor</a> models for total goals and goal difference. Their predictions are converted into expected home and away goals, and final scoreline probabilities are generated from a Poisson-based sampler.</p>
+      <div class="badges">
+        <a href="https://github.com/mibrechb/world-cup-2026-prediction" target="_blank" rel="noreferrer"><img alt="GitHub repo badge" src="https://img.shields.io/badge/GitHub-mibrechb%2Fworld--cup--2026--prediction-111827?logo=github&logoColor=white"></a>
+      </div>
+    </div>
+    <div class="tabs">
+      <button class="phase-tab is-active" data-phase="group" >Group</button>
+<button class="phase-tab is-disabled" data-phase="round_of_32" disabled>Round of 32</button>
+<button class="phase-tab is-disabled" data-phase="round_of_16" disabled>Round of 16</button>
+<button class="phase-tab is-disabled" data-phase="quarterfinal" disabled>Quarterfinal</button>
+<button class="phase-tab is-disabled" data-phase="semifinal" disabled>Semifinal</button>
+<button class="phase-tab is-disabled" data-phase="third_place" disabled>Third Place</button>
+<button class="phase-tab is-disabled" data-phase="final" disabled>Final</button>
+    </div>
+    <div class="viewer">
+      <iframe id="phase-frame" src="web/interactive-group.html"></iframe>
+    </div>
+  </div>
+  <script>
+    const tabs = Array.from(document.querySelectorAll('.phase-tab:not(.is-disabled)'));
+    const frame = document.getElementById('phase-frame');
+    tabs.forEach(tab => {
+      tab.addEventListener('click', () => {
+        const phaseName = tab.dataset.phase;
+        tabs.forEach(other => other.classList.remove('is-active'));
+        tab.classList.add('is-active');
+        if (frame) frame.src = `web/interactive-${phaseName}.html`;
+      });
+    });
+  </script>
+</body>
+</html>
