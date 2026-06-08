@@ -1,5 +1,11 @@
 # World Cup 2026 Match & Tipp Prediction
 
+This repository contains the code used to generate an interactive World Cup 2026 prediction portal, hosted via GitHub Pages.
+
+[![Interactive Portal](https://img.shields.io/badge/Click%20me-%E2%9A%BD%20Interactive%20Prediction%20Portal-1f6feb?style=for-the-badge)](https://mibrechb.github.io/world-cup-2026-prediction/)
+
+## How does it work
+
 This project reuses the original outcome (win-draw-loss) model and data pipeline of Javier Ruano's [World Cup 2026 prediction model](https://github.com/javierruanohdez/world-cup-2026-prediction) as a first stage. It adds custom functions in a secondary stage for per-match score simulations and optimal tip recommendations for the [SRF Sport FIFA World Cup 2026 Tippspiel](https://wmtippspiel.srf.ch/).
 
 *First stage outcome predictions* are based on a supervised [GradientBoostingClassifier](https://scikit-learn.org/stable/modules/generated/sklearn.ensemble.GradientBoostingClassifier.html), which treats each match as a win-draw-loss classification problem and returns the associated probabilities. The model is trained on team-level and match-level features from international match results, FIFA rankings, tournament performance, and recent form.
