@@ -79,27 +79,13 @@
       border-color: rgba(203, 213, 225, 0.9);
       cursor: not-allowed;
     }
-    .viewer {
-      background: var(--panel-bg);
-      border: 1px solid var(--panel-border);
-      border-radius: 24px;
-      box-shadow: var(--shadow);
-      overflow: hidden;
-      min-height: calc(100vh - 260px);
-    }
-    .viewer iframe {
-      width: 100%;
-      height: calc(100vh - 260px);
-      min-height: 900px;
-      border: 0;
+    #phase-content {
       display: block;
-      background: transparent;
     }
     .empty-state { padding: 48px 28px; color: var(--muted); line-height: 1.6; }
     @media (max-width: 900px) {
       .shell { padding: 18px 14px 28px 14px; }
       .badges img { height: 24px; }
-      .viewer iframe { min-height: 760px; }
     }
   </style>
 </head>
@@ -121,21 +107,95 @@
 <button class="phase-tab is-disabled" data-phase="third_place" disabled>Third Place</button>
 <button class="phase-tab is-disabled" data-phase="final" disabled>Final</button>
     </div>
-    <div class="viewer">
-      <iframe id="phase-frame" src="web/interactive-group.html"></iframe>
-    </div>
+    <div id="phase-content"></div>
   </div>
   <script>
     const tabs = Array.from(document.querySelectorAll('.phase-tab:not(.is-disabled)'));
-    const frame = document.getElementById('phase-frame');
+    const phaseContent = document.getElementById('phase-content');
+    const loadedExternalScripts = new Set();
+    const defaultIndexPhase = "group";
+
+    async function loadExternalScript(oldScript) {
+      const scriptUrl = oldScript.src;
+
+      if (scriptUrl && loadedExternalScripts.has(scriptUrl)) {
+        return;
+      }
+
+      if (scriptUrl && scriptUrl.includes('plotly') && window.Plotly) {
+        loadedExternalScripts.add(scriptUrl);
+        return;
+      }
+
+      await new Promise((resolve, reject) => {
+        const newScript = document.createElement('script');
+
+        Array.from(oldScript.attributes).forEach(attribute => {
+          newScript.setAttribute(attribute.name, attribute.value);
+        });
+
+        newScript.onload = () => {
+          if (scriptUrl) loadedExternalScripts.add(scriptUrl);
+          resolve();
+        };
+        newScript.onerror = reject;
+
+        document.body.appendChild(newScript);
+      });
+    }
+
+    function runInlineScript(oldScript) {
+      const newScript = document.createElement('script');
+      newScript.type = 'module';
+      newScript.textContent = oldScript.textContent;
+      phaseContent.appendChild(newScript);
+    }
+
+    async function loadPhase(phaseName) {
+      if (!phaseContent || !phaseName) return;
+
+      const response = await fetch(`web/interactive-${phaseName}.html`);
+      if (!response.ok) {
+        throw new Error(`Could not load phase: ${phaseName}`);
+      }
+
+      const html = await response.text();
+      const parser = new DOMParser();
+      const doc = parser.parseFromString(html, 'text/html');
+
+      phaseContent.innerHTML = '';
+
+      doc.querySelectorAll('style').forEach(style => {
+        phaseContent.appendChild(style.cloneNode(true));
+      });
+
+      Array.from(doc.body.children).forEach(child => {
+        if (child.tagName.toLowerCase() !== 'script') {
+          phaseContent.appendChild(child.cloneNode(true));
+        }
+      });
+
+      const scripts = Array.from(doc.querySelectorAll('script'));
+
+      for (const script of scripts) {
+        if (script.src) {
+          await loadExternalScript(script);
+        } else {
+          runInlineScript(script);
+        }
+      }
+    }
+
     tabs.forEach(tab => {
       tab.addEventListener('click', () => {
         const phaseName = tab.dataset.phase;
         tabs.forEach(other => other.classList.remove('is-active'));
         tab.classList.add('is-active');
-        if (frame) frame.src = `web/interactive-${phaseName}.html`;
+        loadPhase(phaseName);
       });
     });
+
+    loadPhase(defaultIndexPhase);
   </script>
 </body>
 </html>
