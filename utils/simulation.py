@@ -6,7 +6,6 @@ from utils.outcome_model import get_match_probabilities, sample_result_from_prob
 from utils.goal_model import estimate_expected_goals, sample_scoreline
 from utils.runtime_data import groups, model
 
-
 def _enrich_match_info_with_goal_estimate(match_info):
     expected_goals = estimate_expected_goals(match_info)
     if expected_goals is None:
@@ -154,6 +153,7 @@ def score_tip(
     elif phase in {
         'play-in',
         'round_of_16',
+        'round_of_32',
         'quarterfinal',
         'semifinal',
         'final',

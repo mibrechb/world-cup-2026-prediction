@@ -1,26 +1,57 @@
 from pathlib import Path
 from math import lgamma
+import os
 
 import joblib
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import GradientBoostingRegressor
+from sklearn.model_selection import TimeSeriesSplit
 
+from utils import runtime_data
 from utils.outcome_model import (
     apply_modern_adjustment,
     prepare_feature_frame,
 )
-from utils.runtime_data import EMPIRICAL_MAX_GOALS, get_result_code, historical_results, matches, model
+from utils.runtime_data import EMPIRICAL_MAX_GOALS, get_result_code, historical_results, matches
 
-DEFAULT_VALIDATION_START_DATE = '2018-01-01'
+DEFAULT_PHASE = os.environ.get('WORLD_CUP_PHASE', 'round_of_32')
+DEFAULT_VALIDATION_SPLITS = 5
 GOAL_MODEL_RANDOM_STATE = 42
 GOAL_PROFILE_WINDOW = 8
-GOAL_TOTAL_MODEL_PATH = Path('models/model_grboostreg_goal-total_v1.pkl')
-GOAL_DIFF_MODEL_PATH = Path('models/model_grboostreg_goal-diff_v1.pkl')
+PHASE_START_DATES = {
+    'group': '2026-06-11',
+    'round_of_32': '2026-06-28',
+    'round_of_16': '2026-07-04',
+    'quarterfinals': '2026-07-09',
+    'semifinals': '2026-07-14',
+    'finals': '2026-07-19',
+}
 
-# Backward-compatible aliases for notebook imports.
-GOAL_HOME_MODEL_PATH = GOAL_TOTAL_MODEL_PATH
-GOAL_AWAY_MODEL_PATH = GOAL_DIFF_MODEL_PATH
+def get_goal_model_paths(phase=DEFAULT_PHASE, model_dir='models'):
+    """Returns phase-specific goal model paths."""
+    model_dir = Path(model_dir)
+    return (
+        model_dir / f'model_grboostreg_goal-total_{phase}.pkl',
+        model_dir / f'model_grboostreg_goal-diff_{phase}.pkl',
+    )
+
+# Load phase-specific goal models
+def load_goal_models(
+    phase=DEFAULT_PHASE
+):
+    """Loads phase-specific goal models, if both model files exist."""
+
+    path_model_total = Path(f"models/model_grboostreg_goal-total_{phase}.pkl")
+    path_model_diff = Path(f"models/model_grboostreg_goal-diff_{phase}.pkl")
+
+    if not path_model_total.exists() or not path_model_diff.exists():
+        raise FileNotFoundError(f"Missing phase-specific goal models for phase '{phase}': {path_model_total}, {path_model_diff}")
+    
+    print(f"Loaded phase-specific goal models for phase '{phase}': {path_model_total}, {path_model_diff}")
+    return joblib.load(path_model_total), joblib.load(path_model_diff)
+
+goal_models = load_goal_models(DEFAULT_PHASE)
 
 GOAL_REGRESSION_FEATURE_COLUMNS = [
     'fifa_diff',
@@ -148,7 +179,15 @@ def _build_team_goal_profiles(goal_history, window=GOAL_PROFILE_WINDOW):
     return home_profiles, away_profiles, latest_profiles
 
 
-def _build_goal_training_frame(matches_df, results_df):
+def _build_goal_training_frame(matches_df, results_df, fitted_model=None):
+    if fitted_model is None:
+        fitted_model = model
+    if fitted_model is None:
+        raise RuntimeError(
+            'No outcome model is configured. Call configure_goal_phase(phase) '
+            'after training/saving the phase-specific outcome model.'
+        )
+
     goal_history = matches_df.merge(
         results_df[['date', 'home_team', 'away_team', 'home_score', 'away_score', 'total_goals']],
         on=['date', 'home_team', 'away_team'],
@@ -164,7 +203,7 @@ def _build_goal_training_frame(matches_df, results_df):
         axis=1,
     )
     feature_frame = prepare_feature_frame(goal_history)
-    probabilities = model.predict_proba(feature_frame)
+    probabilities = fitted_model.predict_proba(feature_frame)
     goal_history['p_home_raw'] = probabilities[:, 2]
     goal_history['p_draw_raw'] = probabilities[:, 1]
     goal_history['p_away_raw'] = probabilities[:, 0]
@@ -219,8 +258,22 @@ def _build_goal_regression_features(frame):
     return feature_frame[GOAL_REGRESSION_FEATURE_COLUMNS].copy()
 
 
-def _fit_goal_models(training_frame):
-    regression_features = _build_goal_regression_features(training_frame)
+def get_phase_training_frame(df_goal_history, phase=DEFAULT_PHASE):
+    """Keeps only matches available before the selected phase."""
+    df_phase = df_goal_history.copy()
+    df_phase['date'] = pd.to_datetime(df_phase['date']).dt.normalize()
+    phase_start_date = pd.Timestamp(PHASE_START_DATES[phase])
+    df_phase = df_phase[df_phase['date'] < phase_start_date].copy()
+
+    if not df_phase.empty:
+        _, _, latest_profiles = _build_team_goal_profiles(df_phase)
+        df_phase.attrs['latest_team_goal_profiles'] = latest_profiles
+
+    return df_phase
+
+
+def _fit_goal_models(df_training):
+    df_regression_features = _build_goal_regression_features(df_training)
     total_goal_model = GradientBoostingRegressor(
         random_state=GOAL_MODEL_RANDOM_STATE,
         n_estimators=300,
@@ -237,58 +290,92 @@ def _fit_goal_models(training_frame):
         min_samples_leaf=12,
         subsample=0.9,
     )
-    total_goal_model.fit(regression_features, training_frame['total_goals'])
-    goal_diff_model.fit(regression_features, training_frame['goal_diff'])
+    total_goal_model.fit(df_regression_features, df_training['total_goals'])
+    goal_diff_model.fit(df_regression_features, df_training['goal_diff'])
     return total_goal_model, goal_diff_model
-
-
-def load_goal_models(home_model_path=GOAL_HOME_MODEL_PATH, away_model_path=GOAL_AWAY_MODEL_PATH):
-    if not home_model_path.exists() or not away_model_path.exists():
-        return None
-
-    return joblib.load(home_model_path), joblib.load(away_model_path)
 
 
 def train_and_save_goal_models(
-    training_frame=None,
-    home_model_path=GOAL_HOME_MODEL_PATH,
-    away_model_path=GOAL_AWAY_MODEL_PATH,
+    phase=DEFAULT_PHASE,
+    df_training=None,
+    total_model_path=None,
+    diff_model_path=None,
 ):
-    if training_frame is None:
-        training_frame = _goal_training_frame_base
+    if df_training is None:
+        if _goal_training_frame_base is None:
+            configure_goal_phase(phase)
+        df_training = get_phase_training_frame(_goal_training_frame_base, phase)
+    if total_model_path is None or diff_model_path is None:
+        total_model_path, diff_model_path = get_goal_model_paths(phase)
 
-    total_goal_model, goal_diff_model = _fit_goal_models(training_frame)
-    joblib.dump(total_goal_model, home_model_path)
-    joblib.dump(goal_diff_model, away_model_path)
+    total_model_path.parent.mkdir(parents=True, exist_ok=True)
+    diff_model_path.parent.mkdir(parents=True, exist_ok=True)
+
+    total_goal_model, goal_diff_model = _fit_goal_models(df_training)
+    joblib.dump(total_goal_model, total_model_path)
+    joblib.dump(goal_diff_model, diff_model_path)
     return total_goal_model, goal_diff_model
 
 
-def _attach_goal_model_predictions(training_frame, home_goal_model, away_goal_model):
-    regression_features = _build_goal_regression_features(training_frame)
-    enriched_frame = training_frame.copy()
+def configure_goal_phase(phase=DEFAULT_PHASE, require_saved=False):
+    """Configures module-level goal models and profiles for one phase."""
+    global model
+    global _goal_home_model
+    global _goal_away_model
+    global _goal_model_phase
+    global _goal_training_frame
+    global _goal_training_frame_base
+    global _latest_team_goal_profiles
+
+    model = runtime_data.configure_outcome_model(phase)
+
+    _goal_training_frame_base = _build_goal_training_frame(
+        matches,
+        historical_results,
+        fitted_model=model,
+    )
+    df_phase_training = get_phase_training_frame(_goal_training_frame_base, phase)
+
+    _goal_home_model, _goal_away_model = goal_models
+    _goal_model_phase = phase
+    _latest_team_goal_profiles = df_phase_training.attrs.get(
+        'latest_team_goal_profiles',
+        _goal_training_frame_base.attrs.get('latest_team_goal_profiles', {}),
+    )
+    _goal_training_frame = _attach_goal_model_predictions(
+        df_phase_training.copy(),
+        _goal_home_model,
+        _goal_away_model,
+    )
+    return _goal_home_model, _goal_away_model
+
+
+def _attach_goal_model_predictions(df_training, total_goal_model, diff_goal_model):
+    df_regression_features = _build_goal_regression_features(df_training)
+    df_enriched = df_training.copy()
     predicted_total_goals = np.clip(
-        home_goal_model.predict(regression_features),
+        total_goal_model.predict(df_regression_features),
         0,
         EMPIRICAL_MAX_GOALS * 2,
     )
     predicted_goal_diff = np.clip(
-        away_goal_model.predict(regression_features),
+        diff_goal_model.predict(df_regression_features),
         -EMPIRICAL_MAX_GOALS,
         EMPIRICAL_MAX_GOALS,
     )
-    enriched_frame['predicted_total_goals_model'] = predicted_total_goals
-    enriched_frame['predicted_goal_diff_model'] = predicted_goal_diff
-    enriched_frame['predicted_home_goals_model'] = np.clip(
+    df_enriched['predicted_total_goals_model'] = predicted_total_goals
+    df_enriched['predicted_goal_diff_model'] = predicted_goal_diff
+    df_enriched['predicted_home_goals_model'] = np.clip(
         (predicted_total_goals + predicted_goal_diff) / 2,
         0,
         EMPIRICAL_MAX_GOALS,
     )
-    enriched_frame['predicted_away_goals_model'] = np.clip(
+    df_enriched['predicted_away_goals_model'] = np.clip(
         (predicted_total_goals - predicted_goal_diff) / 2,
         0,
         EMPIRICAL_MAX_GOALS,
     )
-    return enriched_frame
+    return df_enriched
 
 
 def _build_match_feature_row(match_info):
@@ -338,7 +425,7 @@ def _poisson_probability(goal_count, rate, max_goal_count=EMPIRICAL_MAX_GOALS):
     return max(capped_probability, 0.0)
 
 
-def _build_poisson_score_distribution(match_info, result=None, goal_models=None):
+def _build_poisson_score_distribution(match_info, result=None, goal_models=goal_models):
     predicted_home_goals, predicted_away_goals = _predict_goal_means(match_info, goal_models=goal_models)
     rows = []
     for home_score in range(EMPIRICAL_MAX_GOALS + 1):
@@ -374,7 +461,7 @@ def _build_poisson_score_distribution(match_info, result=None, goal_models=None)
     return distribution[['home_score', 'away_score', 'weight', 'probability', 'goal_diff', 'total_goals']]
 
 
-def _build_scoreline_distribution(match_info, result=None, goal_models=None):
+def _build_scoreline_distribution(match_info, result=None, goal_models=goal_models):
     return _build_poisson_score_distribution(
         match_info,
         result=result,
@@ -382,23 +469,20 @@ def _build_scoreline_distribution(match_info, result=None, goal_models=None):
     )
 
 
-_goal_training_frame_base = _build_goal_training_frame(matches, historical_results)
-_latest_team_goal_profiles = _goal_training_frame_base.attrs.get('latest_team_goal_profiles', {})
-_loaded_goal_models = load_goal_models()
-if _loaded_goal_models is None:
-    _goal_home_model, _goal_away_model = _fit_goal_models(_goal_training_frame_base)
-else:
-    _goal_home_model, _goal_away_model = _loaded_goal_models
-
-_goal_training_frame = _goal_training_frame_base.copy()
-_goal_training_frame = _attach_goal_model_predictions(
-    _goal_training_frame,
-    _goal_home_model,
-    _goal_away_model,
-)
+_goal_training_frame_base = None
+_goal_model_phase = None
+_goal_home_model = None
+_goal_away_model = None
+_goal_training_frame = None
+_latest_team_goal_profiles = {}
 
 
-def build_match_info_from_row(row, fitted_model=model):
+def build_match_info_from_row(row, fitted_model=None):
+    if fitted_model is None:
+        fitted_model = model
+    if fitted_model is None:
+        raise RuntimeError('No outcome model is configured. Call configure_goal_phase(phase) first.')
+
     feature_frame = prepare_feature_frame(pd.DataFrame([row]))
     probabilities = fitted_model.predict_proba(feature_frame)[0]
     p_away_raw, p_draw_raw, p_home_raw = probabilities
@@ -451,7 +535,7 @@ def build_match_info_from_row(row, fitted_model=model):
     }
 
 
-def _predict_goal_means(match_info, goal_models=None):
+def _predict_goal_means(match_info, goal_models=goal_models):
     total_goal_model, goal_diff_model = (
         goal_models if goal_models is not None else (_goal_home_model, _goal_away_model)
     )
@@ -464,11 +548,11 @@ def _predict_goal_means(match_info, goal_models=None):
     return predicted_home_goals, predicted_away_goals
 
 
-def estimate_expected_goals(match_info, goal_models=None):
+def estimate_expected_goals(match_info, goal_models=goal_models):
     return _predict_goal_means(match_info, goal_models=goal_models)
 
 
-def get_conditional_scoreline_distribution(match_info, result, goal_models=None):
+def get_conditional_scoreline_distribution(match_info, result, goal_models=goal_models):
     return _build_scoreline_distribution(
         match_info,
         result=result,
@@ -476,38 +560,18 @@ def get_conditional_scoreline_distribution(match_info, result, goal_models=None)
     )
 
 
-def evaluate_second_stage_on_historical_matches(
-    validation_start_date=DEFAULT_VALIDATION_START_DATE,
-    max_matches=None,
-    min_history_matches=1000,
-):
-    goal_history = _goal_training_frame.sort_values('date').reset_index(drop=True)
-    training_frame = goal_history.loc[
-        goal_history['date'] < pd.Timestamp(validation_start_date)
-    ].copy()
-    validation_frame = goal_history.loc[
-        goal_history['date'] >= pd.Timestamp(validation_start_date)
-    ].copy()
-
-    if len(training_frame) < min_history_matches:
-        return pd.DataFrame()
-
-    validation_home_model, validation_away_model = _fit_goal_models(training_frame)
-
-    if max_matches is not None:
-        validation_frame = validation_frame.head(max_matches).copy()
-
+def _evaluate_goal_rows(df_validation, goal_models, fold=None):
     evaluation_rows = []
-    for _, row in validation_frame.iterrows():
+    for _, row in df_validation.iterrows():
         match_info = build_match_info_from_row(row)
         predicted_goals_a, predicted_goals_b = estimate_expected_goals(
             match_info,
-            goal_models=(validation_home_model, validation_away_model),
+            goal_models=goal_models,
         )
         conditional_distribution = _build_scoreline_distribution(
             match_info,
             result=row['result'],
-            goal_models=(validation_home_model, validation_away_model),
+            goal_models=goal_models,
         )
 
         if conditional_distribution is None:
@@ -521,7 +585,7 @@ def evaluate_second_stage_on_historical_matches(
         actual_score_probability = float(actual_score_probability)
 
         top_score = conditional_distribution.iloc[0]
-        evaluation_rows.append({
+        evaluation_row = {
             'date': row['date'],
             'team_a': row['home_team'],
             'team_b': row['away_team'],
@@ -546,7 +610,43 @@ def evaluate_second_stage_on_historical_matches(
             'total_goal_error': abs((predicted_goals_a + predicted_goals_b) - float(row['total_goals'])),
             'goal_diff_error': abs((predicted_goals_a - predicted_goals_b) - float(row['goal_diff'])),
             'actual_score_log_probability': float(np.log(max(actual_score_probability, 1e-12))),
-        })
+        }
+        if fold is not None:
+            evaluation_row['fold'] = fold
+        evaluation_rows.append(evaluation_row)
+
+    return evaluation_rows
+
+
+def evaluate_second_stage_on_historical_matches(
+    phase=DEFAULT_PHASE,
+    n_splits=DEFAULT_VALIDATION_SPLITS,
+    max_matches=None,
+    min_history_matches=1000,
+):
+    if _goal_training_frame_base is None or _goal_model_phase != phase:
+        configure_goal_phase(phase)
+
+    df_goal_history = get_phase_training_frame(_goal_training_frame_base, phase)
+    df_goal_history = df_goal_history.sort_values('date').reset_index(drop=True)
+
+    if len(df_goal_history) < min_history_matches:
+        return pd.DataFrame()
+
+    splitter = TimeSeriesSplit(n_splits=n_splits)
+    evaluation_rows = []
+
+    for fold, (train_index, validation_index) in enumerate(splitter.split(df_goal_history), start=1):
+        df_train = df_goal_history.iloc[train_index].copy()
+        df_validation = df_goal_history.iloc[validation_index].copy()
+
+        if len(df_train) < min_history_matches:
+            continue
+        if max_matches is not None:
+            df_validation = df_validation.head(max_matches).copy()
+
+        validation_models = _fit_goal_models(df_train)
+        evaluation_rows.extend(_evaluate_goal_rows(df_validation, validation_models, fold=fold))
 
     return pd.DataFrame(evaluation_rows)
 

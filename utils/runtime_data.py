@@ -1,9 +1,13 @@
+from pathlib import Path
+import os
+
 import joblib
 import numpy as np
 import pandas as pd
 
 CURRENT_YEAR = 2026
 EMPIRICAL_MAX_GOALS = 7
+DEFAULT_PHASE = os.environ.get('WORLD_CUP_PHASE', 'round_of_32')
 ROUND_VARIANCE = {
     'group': 18,
     'round_of_32': 30,
@@ -39,13 +43,108 @@ groups = {
     group: [PLAYOFF_REPLACEMENTS.get(team, team) for team in teams]
     for group, teams in GROUPS.items()
 }
-model = joblib.load('models/model_grboostclass_outcome_v1.pkl')
+
+# Define teams of other phases
+TEAMS_ROUND_OF_32 = [
+    'South Africa', 'Canada', 'Netherlands', 'Morocco',
+    'Germany', 'Paraguay', 'France', 'Sweden',
+    'Brazil', 'Japan', 'Norway', 'Ivory Coast',
+    'Mexico', 'Ecuador', 'England', 'DR Congo',
+    'Portugal', 'Croatia', 'Spain', 'Austria',
+    'United States', 'Bosnia and Herzegovina', 'Belgium', 'Senegal',
+    'Argentina', 'Cape Verde', 'Egypt', 'Australia',
+    'Switzerland', 'Algeria', 'Colombia', 'Ghana',
+]
+
+TEAMS_ROUND_OF_16 = [
+    'Canada', 'Morocco', 'Paraguay', 'France',
+    'Brazil', 'Norway', 'Mexico', 'England',
+    'Portugal', 'Spain', 'United States', 'Belgium',
+    'Argentina', 'Egypt', 'Switzerland', 'Colombia',
+]
+# Load phase-specific outcome model
+def get_outcome_model_path(phase=DEFAULT_PHASE, model_dir='models'):
+    """Returns the preferred phase-specific outcome model path."""
+    return Path(model_dir) / f'model_grboostclass_outcome_{phase}.pkl'
+
+def load_outcome_model(phase=DEFAULT_PHASE, model_dir='models'):
+    """Loads the required phase-specific outcome model."""
+    phase_model_path = get_outcome_model_path(phase, model_dir=model_dir)
+    if not phase_model_path.exists():
+        raise FileNotFoundError(
+            f'Missing phase-specific outcome model: {phase_model_path}'
+        )
+    return joblib.load(phase_model_path)
+
+def configure_outcome_model(phase=DEFAULT_PHASE):
+    """Loads and stores the active outcome model for a phase."""
+    global model
+    model = load_outcome_model(phase)
+    print(f"Loaded outcome model for phase '{phase}' from {get_outcome_model_path(phase)}")
+    return model
+
+model = configure_outcome_model(DEFAULT_PHASE)
+
+# Phase-specific fifa rankings (latest)
+PHASE_KNOWLEDGE_DATES = {
+    'group': '2026-06-11',
+    'round_of_32': '2026-06-28',
+    'round_of_16': '2026-07-04',
+    'quarterfinals': '2026-07-09',
+    'quarterfinal': '2026-07-09',
+    'semifinals': '2026-07-14',
+    'semifinal': '2026-07-14',
+    'finals': '2026-07-19',
+    'final': '2026-07-19',
+}
+
+def load_fifa_ranking_snapshot(
+    phase: str = DEFAULT_PHASE,
+    ranking_path: str = 'data/processed/fifa_world_rankings.csv',
+) -> pd.DataFrame:
+    """Loads the latest FIFA ranking snapshot available by phase start date."""
+    df_fifa_all = pd.read_csv(ranking_path, parse_dates=['date'])
+    df_fifa_all['date'] = pd.to_datetime(df_fifa_all['date']).dt.normalize()
+
+    phase_cutoff_date = pd.Timestamp(PHASE_KNOWLEDGE_DATES[phase])
+
+    df_available_dates = (
+        df_fifa_all.loc[df_fifa_all['date'] <= phase_cutoff_date, ['date']]
+        .drop_duplicates()
+        .sort_values('date')
+    )
+
+    if df_available_dates.empty:
+        raise ValueError(
+            f"No FIFA ranking snapshot available by {phase_cutoff_date.date()} "
+            f"for phase '{phase}'."
+        )
+
+    ranking_snapshot_date = df_available_dates['date'].iloc[-1]
+
+    print(
+        f"Loaded FIFA rankings from {ranking_snapshot_date.date()} "
+        f"for phase '{phase}'"
+    )
+
+    # Rename countries to align
+    dict_rename = {'Türkiye': 'Turkey', 
+                   "Côte d'Ivoire": 'Ivory Coast', 
+                   'Czechia': 'Czech Republic',
+                   'DPR Korea': 'North Korea',
+                   'Congo DR': 'DR Congo',
+                   }
+    df_fifa_all.replace({'country': dict_rename}, inplace=True)
+
+    return df_fifa_all[df_fifa_all['date'] == ranking_snapshot_date].copy()
+
+fifa = load_fifa_ranking_snapshot(DEFAULT_PHASE)
+
+# Other historical information
 matches = pd.read_csv('data/processed/matches_2000_onwards_features_fifa.csv', parse_dates=['date'])
 historical_results = pd.read_csv('data/processed/results_2000_onwards.csv', parse_dates=['date'])
 shootouts = pd.read_csv('data/raw/shootouts.csv', parse_dates=['date'])
-fifa = pd.read_csv('data/processed/fifa_latest_world_ranking.csv', parse_dates=['date'])
 achievements = pd.read_csv('data/raw/team_achievements.csv').set_index('team')
-
 
 def achievement_score(team):
     if team not in achievements.index:

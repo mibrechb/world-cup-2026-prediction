@@ -165,4 +165,5 @@ cython_debug/
 # data/*
 # !data/.gitkeep
 simulation_results/*
+notebooks_og/*
 .env
