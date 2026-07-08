@@ -101,8 +101,8 @@
     <div class="tabs">
       <button class="phase-tab" data-phase="group" >Group</button>
 <button class="phase-tab" data-phase="round_of_32" >Round of 32</button>
-<button class="phase-tab is-active" data-phase="round_of_16" >Round of 16</button>
-<button class="phase-tab is-disabled" data-phase="quarterfinal" disabled>Quarterfinal</button>
+<button class="phase-tab" data-phase="round_of_16" >Round of 16</button>
+<button class="phase-tab is-active" data-phase="quarterfinal" >Quarterfinal</button>
 <button class="phase-tab is-disabled" data-phase="semifinal" disabled>Semifinal</button>
 <button class="phase-tab is-disabled" data-phase="third_place" disabled>Third Place</button>
 <button class="phase-tab is-disabled" data-phase="final" disabled>Final</button>
@@ -113,7 +113,7 @@
     const tabs = Array.from(document.querySelectorAll('.phase-tab:not(.is-disabled)'));
     const phaseContent = document.getElementById('phase-content');
     const loadedExternalScripts = new Set();
-    const defaultIndexPhase = "round_of_16";
+    const defaultIndexPhase = "quarterfinal";
 
     async function loadExternalScript(oldScript) {
       const scriptUrl = oldScript.src;

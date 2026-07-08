@@ -62,6 +62,14 @@ TEAMS_ROUND_OF_16 = [
     'Portugal', 'Spain', 'United States', 'Belgium',
     'Argentina', 'Egypt', 'Switzerland', 'Colombia',
 ]
+
+TEAMS_QUARTERFINAL = [
+    'Morocco', 'France',
+    'Norway', 'England',
+    'Spain', 'Belgium',
+    'Argentina', 'Switzerland',
+]
+
 # Load phase-specific outcome model
 def get_outcome_model_path(phase=DEFAULT_PHASE, model_dir='models'):
     """Returns the preferred phase-specific outcome model path."""
@@ -90,11 +98,8 @@ PHASE_KNOWLEDGE_DATES = {
     'group': '2026-06-11',
     'round_of_32': '2026-06-28',
     'round_of_16': '2026-07-04',
-    'quarterfinals': '2026-07-09',
     'quarterfinal': '2026-07-09',
-    'semifinals': '2026-07-14',
     'semifinal': '2026-07-14',
-    'finals': '2026-07-19',
     'final': '2026-07-19',
 }
 

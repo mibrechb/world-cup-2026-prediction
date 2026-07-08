@@ -100,10 +100,11 @@ match_schedule = [
         ('Argentina', 'Egypt', '2026-07-07T16:00:00Z'),
         ('Switzerland', 'Colombia', '2026-07-07T20:00:00Z'),
 
-        # ('Paraguay/France', 'Canada/Morocco', '2026-07-09T20:00:00Z'),
-        # ('Portugal/Spain', 'USA/Belgium', '2026-07-10T19:00:00Z'),
-        # ('Brazil/Norway', 'Mexico/England', '2026-07-11T21:00:00Z'),
-        # ('Argentina/Egypt', 'Switzerland/Colombia', '2026-07-12T01:00:00Z'),
+        ('France', 'Morocco', '2026-07-09T20:00:00Z'),
+        ('Spain', 'Belgium', '2026-07-10T19:00:00Z'),
+        ('Norway', 'England', '2026-07-11T21:00:00Z'),
+        ('Argentina', 'Switzerland', '2026-07-12T01:00:00Z'),
+
         # ('Match 97 winner', 'Match 98 winner', '2026-07-14T19:00:00Z'),
         # ('Match 99 winner', 'Match 100 winner', '2026-07-15T19:00:00Z'),
         # ('Match 101 loser', 'Match 102 loser', '2026-07-18T21:00:00Z'),
